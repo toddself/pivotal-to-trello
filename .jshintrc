@@ -7,7 +7,7 @@
   "undef": true,
   "devel": true,
   "node": true,
-  "browser": true,
+  "browser": false,
   "evil": false,
   "latedef": true,
   "nonew": true,

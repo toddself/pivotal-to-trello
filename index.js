@@ -1,8 +1,23 @@
 'use strict';
 
+var path = require('path');
+var fs = require('fs');
+
 var Trello = require('node-trello');
 var pivotal = require('pivotal');
+var log = require('npmlog');
+var FormData = require('form-data');
+var request = require('request');
+var mime = require('mime');
+
+var PROXY = process.env.PROXY || '';
+var VERBOSE = process.env.VERBOSE;
+var trelloAPI = 'https://api.trello.com';
 var requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current', 'backlog', 'icebox'];
+
+if(PROXY){
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
 
 function organizeLists(trelloLists){
   var list = trelloLists.reduce(function(a, list){
@@ -30,7 +45,9 @@ function addChecklistsToCard(trello, cardId, tasks, name, cb){
     };
 
     tasks.forEach(function(task){
-      console.log('adding task:', task.description, 'for', name);
+      if(VERBOSE){
+        log.info('pivotal-to-trello', 'adding task: %s for %s', task.description, name);
+      }
       var taskPayload = {
         name: task.description,
         pos: task.position,
@@ -58,7 +75,10 @@ function addCommentsToCard(trello, cardId, comments, name, cb){
   };
 
   comments.forEach(function(comment){
-    console.log('adding comment:', comment.text,'for', name);
+    if(VERBOSE){
+      log.info('pivotal-to-trello', 'adding comment: %s for %s', comment.text, name);
+    }
+
     var commentPayload = {
       text: comment.text
     };
@@ -66,12 +86,13 @@ function addCommentsToCard(trello, cardId, comments, name, cb){
   });
 }
 
-function addAttachmentsToCard(trello, cardId, attachments, name, cb){
+function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb){
   var _count = 0;
-
+  var attachmentsURI = trelloAPI+'/1/cards/'+cardId+'/attachments?key='+key+'&token='+token;
   var finished = function(err){
     ++_count;
     if(err){
+      log.error('pivotal-to-trello', err);
       return cb(err);
     }
 
@@ -81,22 +102,60 @@ function addAttachmentsToCard(trello, cardId, attachments, name, cb){
   };
 
   attachments.forEach(function(attachment){
-    console.log('adding attachment:', attachment.filename, 'for', name);
-    var attachmentPayload = {
+    log.info('pivotal-to-trello', 'adding attachment: %s for %s', attachment.filename, name);
+
+    var fn = path.join('/tmp', path.basename(attachment.filename));
+    var s = fs.createWriteStream(fn);
+
+    s.on('error', function(err){
+      log.error('pivotal-to-trello', err);
+    });
+
+    s.on('close', function(){
+      fs.readFile(fn, function(err, data){
+        if(err){
+          return finished(err);
+        }
+
+        var form = new FormData();
+        form.append('name', attachment.filename);
+        form.append('file', data, {contentType: mime.lookup(fn)});
+
+        var req = request({
+          method: 'POST',
+          url: attachmentsURI,
+          proxy: PROXY
+        }, function(err, resp, body){
+          if(err || resp.statusCode !== 200){
+            log.error('pivotal-to-trello', 'Could not create attachment', err || resp.statusCode+' '+body);
+            log.error('pivotal-to-trello', attachment);
+            return finished();
+          }
+          log.info('pivotal-to-trello', 'Attached file');
+          finished();
+        });
+
+        req.on('error', function(err){
+          log.error('pivotal-to-trello', 'Could not create attachment', err);
+          log.error('pivotal-to-trello', attachment);
+          return finished();
+        });
+
+        form.pipe(req);
+      });
+    });
+
+    request.get({
       url: attachment.url,
-      name: attachment.filename
-    };
-    trello.post('/1/cards/'+cardId+'/attachments', attachmentPayload, finished);
+      proxy: PROXY,
+      headers: {
+        'X-TrackerToken': pivotal
+      }}).pipe(s);
   });
 }
 
-function createTrelloCard(trello, lists, story, storyIndex, cb){
-  if(story.id === '69812828'){
-    console.log(story);
-  }
-
+function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex, cb){
   var destList = story.current_state.toLowerCase();
-
   if(destList === 'unscheduled'){
     destList = 'icebox';
   } else if(destList === 'unstarted'){
@@ -122,7 +181,7 @@ function createTrelloCard(trello, lists, story, storyIndex, cb){
   };
 
   trello.post('/1/cards', trelloPayload, function(err, res){
-    console.log('migrating', story.id, story.name);
+    log.info('pivotal-to-trello', 'migrating', story.id, story.name);
     var tasks;
     var notes;
     var attachments;
@@ -154,11 +213,11 @@ function createTrelloCard(trello, lists, story, storyIndex, cb){
       addCommentsToCard(trello, res.id, notes, story.name, finished);
     }
 
-    if(story.attachments && story.attachments.attachment){
-      ++_total;
-      attachments = Array.isArray(story.attachments.attachment) ? story.attachments.attachment : [story.attachments.attachment];
-      addAttachmentsToCard(trello, res.id, attachments, story.name, finished);
-    }
+    // if(story.attachments && story.attachments.attachment){
+    //   ++_total;
+    //   attachments = Array.isArray(story.attachments.attachment) ? story.attachments.attachment : [story.attachments.attachment];
+    //   addAttachmentsToCard(key, token, pivotal, res.id, attachments, story.name, finished);
+    // }
 
     finished();
   });
@@ -186,7 +245,7 @@ function readPivotalStories(pivotal, trello, opts, cb){
     }
     _total = stories.story.length;
     stories.story.forEach(function(story, storyIndex){
-      createTrelloCard(trello, lists, story, storyIndex, finished);
+      createTrelloCard(trello, opts.trello_key, opts.trello_token, opts.pivotal, lists, story, storyIndex, finished);
     });
   });
 }
@@ -228,13 +287,13 @@ function verifyLists(lists, opts, trello, pivotal, cb){
     });
 
     if(needed.length > 0){
-      console.log('Not all boards exist', needed.join(', '));
+      log.info('pivotal-to-trello', 'The following lists will be created:', needed.join(', '));
       makeLists(needed, opts, trello, pivotal, cb);
     } else {
       readPivotalStories(pivotal, trello, opts, cb);
     }
   } else {
-    console.log('Sorry, there was an error with getting the lists on your board from Trello');
+    log.error('pivotal-to-trello', 'Sorry, there was an error with getting the lists on your board from Trello');
     process.exit(1);
   }
 }
@@ -255,10 +314,10 @@ function importer(opts){
 
   getListsFromBoard(trello, opts, function(err){
     if(err){
-      console.log(err);
+      log.error('pivotal-to-trello', err);
       process.exit(1);
     }
-    console.log('Finished');
+    log.info('pivotal-to-trello', 'Finished');
   });
 }
 

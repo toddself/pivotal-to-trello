@@ -27,8 +27,12 @@
   },
   "homepage": "https://github.com/toddself/pivotal-to-trello",
   "dependencies": {
+    "form-data": "^0.1.2",
+    "mime": "^1.2.11",
     "minimist": "^0.1.0",
     "node-trello": "^0.1.5",
-    "pivotal": "^0.2.0"
+    "npmlog": "0.0.6",
+    "pivotal": "^0.2.0",
+    "request": "^2.34.0"
   }
 }
