@@ -1,0 +1,34 @@
+{
+  "name": "pivotal-to-trello",
+  "version": "0.0.0",
+  "description": "Import pivotal tracker projects into trello",
+  "main": "index.js",
+  "scripts": {
+    "test": "tap test/*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/toddself/pivotal-to-trello"
+  },
+  "keywords": [
+    "pivotal",
+    "trello",
+    "import",
+    "project",
+    "management",
+    "tracker",
+    "pivotal",
+    "tracker"
+  ],
+  "author": "Todd Kennedy <todd@selfassembled.org>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/toddself/pivotal-to-trello/issues"
+  },
+  "homepage": "https://github.com/toddself/pivotal-to-trello",
+  "dependencies": {
+    "minimist": "^0.1.0",
+    "node-trello": "^0.1.5",
+    "pivotal": "^0.2.0"
+  }
+}

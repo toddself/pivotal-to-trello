@@ -1,0 +1,18 @@
+usage: pivotal-to-trello [options]
+
+  Imports a Pivotal Tracker board into a Trello board.
+
+OPTIONS:
+
+  -p, --pivotal-token   Your Pivotal Tracker access token. (https://www.pivotaltracker.com/profile)
+
+  -k, --trello-key      Your Trello Access key. (https://trello.com/1/appKey/generate)
+
+  -t, --trello-token    Your Trello App token.
+
+  -f, --from-board      The board ID from Pivotal you want to import
+
+  -b, --to-board        The board ID from Trello where you want to create the stories
+
+  -h, --help            Print this message.
+
