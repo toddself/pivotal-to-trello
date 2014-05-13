@@ -3,16 +3,16 @@
 var path = require('path');
 var fs = require('fs');
 
-var Trello = require('node-trello');
 var pivotal = require('pivotal');
 var log = require('npmlog');
+var request = require('hyperquest');
+var async = require('async');
 var FormData = require('form-data');
-var request = require('request');
-var mime = require('mime');
+var Trello = require('node-trello');
 
 var PROXY = process.env.PROXY || '';
-var VERBOSE = process.env.VERBOSE;
-var trelloAPI = 'https://api.trello.com';
+var VERBOSE = process.env.VERBOSE || false;
+var trelloAPI = process.env.TRELLO_API || 'https://api.trello.com';
 var requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current', 'backlog', 'icebox'];
 
 if(PROXY){
@@ -27,81 +27,70 @@ function organizeLists(trelloLists){
   return list;
 }
 
-function addChecklistsToCard(trello, cardId, tasks, name, cb){
+function addChecklistsToCard(trello, cardId, items, name, cb){
+  // we have to create a checkilst itself before we can add items to it...
   trello.post('/1/cards/'+cardId+'/checklists', function(err, checklist){
     if(err){
       return cb(err);
     }
-    var _count = 0;
 
-    var finished = function(err){
-      ++_count;
-      if(err){
-        return cb(err);
-      }
-      if(_count === tasks.length){
-        cb(null);
-      }
-    };
+    var tasks = [];
 
-    tasks.forEach(function(task){
+    items.forEach(function(checkItem){
       if(VERBOSE){
-        log.info('pivotal-to-trello', 'adding task: %s for %s', task.description, name);
+        log.info('pivotal-to-trello', 'adding checkItem: %s for %s', checkItem.description, name);
       }
-      var taskPayload = {
-        name: task.description,
-        pos: task.position,
+      var checkItemPayload = {
+        name: checkItem.description,
+        pos: checkItem.position,
         idChecklist: checklist.id,
-        checked: task.complete
+        checked: checkItem.complete
       };
 
       var checkItemURI = '/1/checklists/'+checklist.id+'/checkItems';
-      trello.post(checkItemURI, taskPayload, finished);
+
+      tasks.push(function(cb){
+        trello.post(checkItemURI, checkItemPayload, cb);
+      });
+    });
+
+    async.parallel(tasks, function(err){
+      if(err){
+        return cb(err);
+      }
+      cb();
     });
   });
 }
 
 function addCommentsToCard(trello, cardId, comments, name, cb){
-  var _count = 0;
-
-  var finished = function(err){
-    ++_count;
-    if(err){
-      return cb(err);
-    }
-    if(_count === comments.length){
-      cb(null);
-    }
-  };
-
+  var tasks = [];
   comments.forEach(function(comment){
     if(VERBOSE){
       log.info('pivotal-to-trello', 'adding comment: %s for %s', comment.text, name);
     }
-
     var commentPayload = {
       text: comment.text
     };
-    trello.post('/1/cards/'+cardId+'/comments', commentPayload, finished);
+    tasks.push(function(cb){
+      trello.post('/1/cards/'+cardId+'/comments', commentPayload, cb);
+    });
+  });
+
+  async.parallel(tasks, function(err){
+    if(err){
+      return cb(err);
+    }
+    cb();
   });
 }
 
 function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb){
-  var _count = 0;
   var attachmentsURI = trelloAPI+'/1/cards/'+cardId+'/attachments?key='+key+'&token='+token;
-  var finished = function(err){
-    ++_count;
-    if(err){
-      log.error('pivotal-to-trello', err);
-      return cb(err);
-    }
+  var tasks = [];
 
-    if(_count === attachments.length){
-      cb(null);
-    }
-  };
 
-  attachments.forEach(function(attachment){
+  var makeAttachment = function(attachment, cb){
     log.info('pivotal-to-trello', 'adding attachment: %s for %s', attachment.filename, name);
 
     var fn = path.join('/tmp', path.basename(attachment.filename));
@@ -114,48 +103,100 @@ function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb
     s.on('close', function(){
       fs.readFile(fn, function(err, data){
         if(err){
-          return finished(err);
+          return cb(err);
         }
 
+        // the trello API is VERY pedantic about what it recieves and for
+        // some reason request wasn't doing it right, so we'll build
+        // the request using form-data and hyperquest ourselves
         var form = new FormData();
         form.append('name', attachment.filename);
-        form.append('file', data, {contentType: mime.lookup(fn)});
+        form.append('file', data, {filename: fn});
+        var headers = form.getHeaders();
+        headers['content-length'] = form.getLengthSync();
 
-        var req = request({
+        var req = request(attachmentsURI, {
           method: 'POST',
-          url: attachmentsURI,
-          proxy: PROXY
-        }, function(err, resp, body){
-          if(err || resp.statusCode !== 200){
-            log.error('pivotal-to-trello', 'Could not create attachment', err || resp.statusCode+' '+body);
-            log.error('pivotal-to-trello', attachment);
-            return finished();
-          }
-          log.info('pivotal-to-trello', 'Attached file');
-          finished();
+          headers: headers
         });
 
         req.on('error', function(err){
           log.error('pivotal-to-trello', 'Could not create attachment', err);
           log.error('pivotal-to-trello', attachment);
-          return finished();
+          return cb();
+        });
+
+        req.on('response', function(res){
+          if(res.statusCode !== 200){
+            log.error('pivotal-to-trello', 'Could not create attachment', res.statusCode);
+            res.pipe(process.stderr);
+          }
+          return cb();
         });
 
         form.pipe(req);
+
       });
     });
 
-    request.get({
-      url: attachment.url,
-      proxy: PROXY,
+    var pivotalRequest = request(attachment.url, {
       headers: {
         'X-TrackerToken': pivotal
-      }}).pipe(s);
+      }});
+
+    pivotalRequest.on('response', function(res){
+      res.pipe(s);
+    });
+  };
+
+  attachments.forEach(function(attachment){
+    tasks.push(makeAttachment.bind(null, attachment));
+  });
+
+  async.parallel(tasks, function(err){
+    if(err){
+      cb(err);
+    }
+    cb();
+  });
+}
+
+function attachCardData(trello, key, token, pivotal, story, card, cb){
+  var tasks, notes, attachments;
+  var asyncTasks = [];
+
+  if(story.tasks && story.tasks.task){
+    tasks =  Array.isArray(story.tasks.task) ? story.tasks.task : [story.tasks.task];
+    asyncTasks.push(function(cb){
+      addChecklistsToCard(trello, card.id, tasks, story.name, cb);
+    });
+  }
+
+  if(story.notes && story.notes.note){
+    notes = Array.isArray(story.notes.note) ? story.notes.note : [story.notes.note];
+    asyncTasks.push(function(cb){
+      addCommentsToCard(trello, card.id, notes, story.name, cb);
+    });
+  }
+
+  if(story.attachments && story.attachments.attachment){
+    attachments = Array.isArray(story.attachments.attachment) ? story.attachments.attachment : [story.attachments.attachment];
+    asyncTasks.push(function(cb){
+      addAttachmentsToCard(key, token, pivotal, card.id, attachments, story.name, cb);
+    });
+  }
+
+  async.parallel(asyncTasks, function(err){
+    if(err){
+      return cb(err);
+    }
+    cb();
   });
 }
 
 function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex, cb){
   var destList = story.current_state.toLowerCase();
+
   if(destList === 'unscheduled'){
     destList = 'icebox';
   } else if(destList === 'unstarted'){
@@ -165,13 +206,10 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
   }
 
   var trelloList = lists[destList].id;
-
   var labels = [story.story_type];
-
   if(story.labels){
     labels = labels.concat(story.labels);
   }
-
   var trelloPayload = {
     name: story.name,
     desc: story.description || '',
@@ -180,98 +218,57 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
     idList: trelloList
   };
 
-  trello.post('/1/cards', trelloPayload, function(err, res){
+  trello.post('/1/cards', trelloPayload, function(err, card){
     log.info('pivotal-to-trello', 'migrating', story.id, story.name);
-    var tasks;
-    var notes;
-    var attachments;
     if(err){
       return cb(err);
     }
-    var _count = 0;
-    var _total = 1;
 
-    var finished = function(err){
-      ++_count;
-      if(err){
-        return cb(err);
-      }
-      if(_count === _total){
-        cb(null);
-      }
-    };
+    attachCardData(trello, key, token, pivotal, story, card, cb);
+  });
+}
 
-    if(story.tasks && story.tasks.task){
-      ++_total;
-      tasks = Array.isArray(story.tasks.task) ? story.tasks.task : [story.tasks.task];
-      addChecklistsToCard(trello, res.id, tasks, story.name, finished);
+function createTrelloCards(trello, opts, lists, stories, cb){
+  var tasks = [];
+  stories.story.forEach(function(story, storyIndex){
+    tasks.push(createTrelloCard.bind(null, trello, opts.trello_key, opts.trello_token, opts.pivotal, lists, story, storyIndex));
+  });
+
+  async.parallel(tasks, function(err){
+    if(err){
+      return cb(err);
     }
-
-    if(story.notes && story.notes.note){
-      ++_total;
-      notes = Array.isArray(story.notes.note) ? story.notes.note : [story.notes.note];
-      addCommentsToCard(trello, res.id, notes, story.name, finished);
-    }
-
-    // if(story.attachments && story.attachments.attachment){
-    //   ++_total;
-    //   attachments = Array.isArray(story.attachments.attachment) ? story.attachments.attachment : [story.attachments.attachment];
-    //   addAttachmentsToCard(key, token, pivotal, res.id, attachments, story.name, finished);
-    // }
-
-    finished();
+    cb();
   });
 }
 
 function readPivotalStories(pivotal, trello, opts, cb){
-  var _count = 0;
-  var _total;
   var lists = organizeLists(opts.lists);
-
-  var finished = function(err){
-    ++_count;
-    if(err){
-      return cb(err);
-    }
-
-    if(_count === _total){
-      cb(null);
-    }
-  };
 
   pivotal.getStories(opts.from, {}, function(err, stories){
     if(err){
       return cb(err);
     }
-    _total = stories.story.length;
-    stories.story.forEach(function(story, storyIndex){
-      createTrelloCard(trello, opts.trello_key, opts.trello_token, opts.pivotal, lists, story, storyIndex, finished);
-    });
+    createTrelloCards(trello, opts, lists, stories, cb);
   });
 }
 
 function makeLists(needed, opts, trello, pivotal, cb){
-  var _count = 0;
-
-  var finished = function(){
-    ++_count;
-    if(_count === needed.length){
-      readPivotalStories(pivotal, trello, opts, cb);
-    }
-  };
+  var tasks = [];
+  var boardUrl = '/1/boards/'+opts.to+'/lists';
 
   needed.forEach(function(list){
     var listPayload = {
       name: list
     };
-
-    trello.post('/1/boards/'+opts.to+'/lists', listPayload, function(err, res){
-      if(err){
-        return cb(err);
-      }
-      opts.lists.push(res);
-      finished();
+    tasks.push(function(cb){
+      trello.post(boardUrl, listPayload, cb);
     });
+  });
+
+  async.parallel(tasks, function(err, res){
+    opts.lists = opts.lists.concat(res);
+    readPivotalStories(pivotal, trello, opts, cb);
   });
 }
 
