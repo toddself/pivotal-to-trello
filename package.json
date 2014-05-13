@@ -11,7 +11,7 @@
     "url": "git://github.com/toddself/pivotal-to-trello"
   },
   "bin": {
-    "pivotal-to-trello": "bin/pivotal-to-trello"
+    "pivotal-to-trello": "bin/pivotal-to-trello.js"
   },
   "keywords": [
     "pivotal",
