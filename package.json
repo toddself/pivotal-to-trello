@@ -31,6 +31,7 @@
   "homepage": "https://github.com/toddself/pivotal-to-trello",
   "dependencies": {
     "form-data": "^0.1.2",
+    "lodash": "^3.1.0",
     "minimist": "^0.1.0",
     "node-trello": "^0.1.5",
     "npmlog": "0.0.6",
