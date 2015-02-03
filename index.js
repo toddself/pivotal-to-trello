@@ -2,6 +2,7 @@
 
 var path = require('path');
 var fs = require('fs');
+var _ = require('lodash');
 
 var pivotal = require('pivotal');
 var log = require('npmlog');
@@ -14,6 +15,12 @@ var PROXY = process.env.PROXY || '';
 var VERBOSE = process.env.VERBOSE || false;
 var trelloAPI = process.env.TRELLO_API || 'https://api.trello.com';
 var requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current', 'backlog', 'icebox'];
+var labelColors = {
+  '#bug': 'red',
+  '#chore': 'blue',
+  '#feature': 'yellow',
+  '#release': 'purple'
+};
 
 if(PROXY){
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -70,14 +77,41 @@ function addCommentsToCard(trello, cardId, comments, name, cb){
       log.info('pivotal-to-trello', 'adding comment: %s for %s', comment.text, name);
     }
     var commentPayload = {
-      text: comment.text
+      text:
+        (comment.author?'**Author:** '+comment.author+'\n':'') +
+        (comment.noted_at?'**Date:** '+comment.noted_at+'\n':'') +
+        (comment.text?'\n**Comment:**\n'+comment.text.replace(/^/gm,'> ')+'\n':'')
     };
     tasks.push(function(cb){
-      trello.post('/1/cards/'+cardId+'/comments', commentPayload, cb);
+      trello.post('/1/cards/'+cardId+'/actions/comments', commentPayload, cb);
     });
   });
 
   async.parallel(tasks, function(err){
+    if(err){
+      return cb(err);
+    }
+    cb();
+  });
+}
+
+function addLabelsToCard(trello, cardId, labels, name, cb){
+  var tasks = [];
+  labels.forEach(function(label){
+    if(VERBOSE){
+      log.info('pivotal-to-trello', 'adding label: %s for %s', label, name);
+    }
+    var labelPayload = {
+      name: label,
+      color: (labelColors[label] || null)
+    };
+    
+    tasks.push(function(cb){
+      trello.post('/1/cards/'+cardId+'/labels', labelPayload, cb);
+    });
+  });
+
+  async.series(tasks, function(err){
     if(err){
       return cb(err);
     }
@@ -162,7 +196,7 @@ function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb
 }
 
 function attachCardData(trello, key, token, pivotal, story, card, cb){
-  var tasks, notes, attachments;
+  var tasks, notes, attachments, labels;
   var asyncTasks = [];
 
   if(story.tasks && story.tasks.task){
@@ -186,6 +220,14 @@ function attachCardData(trello, key, token, pivotal, story, card, cb){
     });
   }
 
+  labels = ['#'+story.story_type];
+  if(story.labels && story.labels.length > 0){
+    labels = labels.concat(Array.isArray(story.labels) ? story.labels : (story.labels||'').split(','));
+  }
+  asyncTasks.push(function(cb){
+    addLabelsToCard(trello, card.id, labels, story.name, cb);
+  });
+
   async.parallel(asyncTasks, function(err){
     if(err){
       return cb(err);
@@ -205,15 +247,21 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
     destList = 'current';
   }
 
-  var trelloList = lists[destList].id;
-  var labels = [story.story_type];
-  if(story.labels){
-    labels = labels.concat(story.labels);
+  // Prevent any 'accepted' story to be transferred (we don't need them)
+  if(destList == 'accepted') {
+    cb();
+    return;
   }
+
+  var trelloList = lists[destList].id;
   var trelloPayload = {
     name: story.name,
-    desc: story.description || '',
-    labels: labels,
+    desc: 
+      (story.owned_by?'**Owned by:** '+story.owned_by+'\n':'') +
+      (story.requested_by?'**Requested by:** '+story.requested_by+'\n':'') +
+      (story.created_at?'**Created at:** '+story.created_at+'\n':'') +
+      (story.url?'**Pivotal URL:** '+story.url+'\n':'') +
+      (story.description?'\n**Description:**\n'+story.description.replace(/^/gm,'> ')+'\n':''),
     pos: storyIndex,
     idList: trelloList
   };
@@ -231,6 +279,8 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
 function createTrelloCards(trello, opts, lists, stories, cb){
   var tasks = [];
   stories.story.forEach(function(story, storyIndex){
+    // If there's a label filter, don't add stories that don't have at least one of the specified labels
+    if (opts.labels.length && !_.intersection(opts.labels, (story.labels || '').toLowerCase().split(',')).length) return;
     tasks.push(createTrelloCard.bind(null, trello, opts.trello_key, opts.trello_token, opts.pivotal, lists, story, storyIndex));
   });
 
@@ -308,7 +358,48 @@ function importer(opts){
   opts.lists = [];
   var trello = new Trello(opts.trello_key, opts.trello_token);
   pivotal.useToken(opts.pivotal);
+  
+  if (opts.clean) {
+    cleanBoard(trello, opts, function() {
+      startProcess(trello, opts);
+    });
+  } else {
+    startProcess(trello, opts);
+  }
+}
 
+function cleanBoard(trello, opts, callback) {
+  log.info('pivotal-to-trello', 'Removing all cards from board...');
+  
+  // Get all lists from board
+  trello.get('/1/boards/'+opts.to+'/lists', function(err, lists){
+    async.each(lists, function(list, cb) {
+      // Archive all cards, then get their IDs
+      trello.post('/1/lists/'+list.id+'/archiveAllCards', function(err){
+        trello.get('/1/lists/'+list.id+'/cards', { 'filter': 'all' }, function(err, cards){
+          // Delete each card
+          async.each(cards, function(card, cb) {
+            trello.del('/1/cards/'+card.id+'/', cb);
+          }, cb);
+        });
+      });
+    }, function() {
+      // Get all labels from board
+      trello.get('/1/boards/'+opts.to+'/labels', function(err, labels){
+        // Delete each label
+        async.each(labels, function(label, cb) {
+          trello.del('/1/labels/'+label.id, cb);
+        }, function() {
+          log.info('pivotal-to-trello', 'Board is clean.');
+          callback();
+        });
+      });
+    });
+  });
+}
+
+function startProcess(trello, opts) {
+  log.info('pivotal-to-trello', 'Process started...');
   getListsFromBoard(trello, opts, function(err){
     if(err){
       log.error('pivotal-to-trello', err);

@@ -19,9 +19,15 @@ Currently due to an issue in how creating attachments in Trello works, attachmen
 ## Usage
 
 ```
-npm i -g pivotal-to-trello
-pivotal-to-trello -k [trello key] -t [trello app token] -p [pivotal key] -f [pivotal project id] -b [trello board id]
+node bin/pivotal-to-trello.js -k [trello key] -t [trello app token] -p [pivotal key] -f [pivotal project id] -b [trello board id]
 ```
+
+### Optional parameters
+
+- `-c, --clean-board`: remove all cards and labels from the Trello board before importing
+- `-l, --labels "comma-separated strings"`: only import stories with at least one of the specified labels (ex: `"major,to fix for v1"`)
+
+> To obtain a valid token from Trello, use the following link: https://trello.com/1/authorize?key=[appkey]&name=[appname]&expiration=1day&response_type=token&scope=read,write
 
 ## Testing
 You'll need to create an `auth.json` file in the project root with the following structure:

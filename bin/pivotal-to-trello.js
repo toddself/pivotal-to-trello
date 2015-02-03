@@ -54,4 +54,7 @@ if(!args.b && !args['to-board']){
   opts.to = args.b || args['to-board'];
 }
 
+opts.clean = args.c || args['clean-board'];
+opts.labels = (args.l || args['labels'] || '').toLowerCase().replace(/, ?/g,',').split(',');
+
 importer(opts);
