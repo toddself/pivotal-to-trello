@@ -29,7 +29,7 @@ You'll need to create an `auth.json` file in the project root with the following
 ```json
 {
   "pivotal": "[YOUR PIVOTAL KEY]",
-  "trello": }
+  "trello": {
     "key": "[YOUR TRELLO KEY]",
     "token": "[YOUR TRELLO TOKEN]",
     "board": "[TRELLO BOARD ID FOR TESTING]"
