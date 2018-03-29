@@ -76,7 +76,7 @@ function addCommentsToCard(trello, cardId, comments, name, cb) {
       text: comment.text
     };
     tasks.push(function (cb) {
-      trello.post('/1/cards/' + cardId + '/comments', commentPayload, cb);
+      trello.post('/1/cards/' + cardId + '/actions/comments', commentPayload, cb);
     });
   });
 
