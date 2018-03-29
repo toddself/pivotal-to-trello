@@ -9,6 +9,7 @@ var request = require('hyperquest');
 var async = require('async');
 var FormData = require('form-data');
 var Trello = require('node-trello');
+var tmp = require('tmp');
 
 var PROXY = process.env.PROXY || '';
 var VERBOSE = process.env.VERBOSE || false;
@@ -89,11 +90,11 @@ function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb
   var attachmentsURI = trelloAPI+'/1/cards/'+cardId+'/attachments?key='+key+'&token='+token;
   var tasks = [];
 
-
   var makeAttachment = function(attachment, cb){
     log.info('pivotal-to-trello', 'adding attachment: %s for %s', attachment.filename, name);
 
-    var fn = path.join('/tmp', path.basename(attachment.filename));
+    var tmpFile = tmp.fileSync();
+    var fn = tmpFile.name;
     var s = fs.createWriteStream(fn);
 
     s.on('error', function(err){
@@ -135,7 +136,6 @@ function addAttachmentsToCard(key, token, pivotal, cardId, attachments, name, cb
         });
 
         form.pipe(req);
-
       });
     });
 
@@ -201,11 +201,18 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
     destList = 'icebox';
   } else if(destList === 'unstarted'){
     destList = 'backlog';
+  } else if(destList === 'planned'){
+    destList = 'backlog';
   } else if(destList === 'started'){
     destList = 'current';
   }
 
-  var trelloList = lists[destList].id;
+  var trelloList = lists[destList];
+  if (!trelloList) {
+    log.error('No list matching "' + destList + '" was found for pivotal story "' + story.name + '".');
+    return;
+  }
+  var trelloListId = trelloList.id;
   var labels = [story.story_type];
   if(story.labels){
     labels = labels.concat(story.labels);
@@ -215,7 +222,7 @@ function createTrelloCard(trello, key, token, pivotal, lists, story, storyIndex,
     desc: story.description || '',
     labels: labels,
     pos: storyIndex,
-    idList: trelloList
+    idList: trelloList.id
   };
 
   trello.post('/1/cards', trelloPayload, function(err, card){
