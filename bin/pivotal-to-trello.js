@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 'use strict';
+Object.defineProperty(exports, "__esModule", { value: true });
 var path = require('path');
 var fs = require('fs');
 var minimist = require('minimist');
-var importer = require('./index');
+const importer = require("./index");
 var args = minimist(process.argv.slice(2));
 function main() {
-    var opts = {};
+    const opts = {};
     if (args.h || args.help) {
         var usage = path.join(__dirname, 'usage.txt');
         fs.createReadStream(usage).pipe(process.stdout);
@@ -37,20 +38,20 @@ function main() {
         opts.pivotal = args.p || args['pivotal-token'];
     }
     if (!args.f && !args['from-board']) {
-        console.log('You must specify a board ID from which to import');
+        console.log('You must specify a Pivotal Project ID from which to import');
         process.exit(1);
     }
     else {
         opts.from = args.f || args['from-board'];
     }
     if (!args.b && !args['to-board']) {
-        console.log('You must specify a board ID to which it will import');
+        console.log('You must specify a Trello board ID to which it will import');
         process.exit(1);
     }
     else {
         opts.to = args.b || args['to-board'];
     }
-    importer(opts);
+    importer.runImport(opts);
 }
 main();
 //# sourceMappingURL=pivotal-to-trello.js.map

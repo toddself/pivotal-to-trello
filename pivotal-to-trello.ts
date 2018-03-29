@@ -5,21 +5,13 @@ var path = require('path');
 var fs = require('fs');
 var minimist = require('minimist');
 
-var importer = require('./index');
+import * as importer from './index';
 
 var args = minimist(process.argv.slice(2));
 
-interface IOptions {
-  trello_key: string;
-  trello_token: string;
-  pivotal: string;
-  from: string;
-  to: string;
-}
-
 function main() {
 
-  const opts: IOptions = <any>{};
+  const opts: importer.IOptions = <any>{};
 
   if (args.h || args.help) {
     var usage = path.join(__dirname, 'usage.txt');
@@ -52,20 +44,20 @@ function main() {
   }
 
   if (!args.f && !args['from-board']) {
-    console.log('You must specify a board ID from which to import');
+    console.log('You must specify a Pivotal Project ID from which to import');
     process.exit(1);
   } else {
     opts.from = args.f || args['from-board'];
   }
 
   if (!args.b && !args['to-board']) {
-    console.log('You must specify a board ID to which it will import');
+    console.log('You must specify a Trello board ID to which it will import');
     process.exit(1);
   } else {
     opts.to = args.b || args['to-board'];
   }
 
-  importer(opts);
+  importer.runImport(opts);
 }
 
 main();
