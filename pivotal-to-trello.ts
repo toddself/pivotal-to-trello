@@ -9,7 +9,7 @@ import * as importer from './index';
 
 var args = minimist(process.argv.slice(2));
 
-function main() {
+async function main() {
 
   const opts: importer.IOptions = <any>{};
 
@@ -57,8 +57,15 @@ function main() {
     opts.to = args.b || args['to-board'];
   }
 
-  importer.runImport(opts);
+  await importer.runImport(opts);
 }
 
-main();
-
+(async () => {
+  try {
+      console.log('Starting main()')
+      await main();
+      console.log('Finished main()')
+  } catch (e) {
+      console.error(e);      
+  }
+})();

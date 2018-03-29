@@ -11,12 +11,67 @@ import * as Trello from 'node-trello';
 import * as tmp from 'tmp';
 import * as sleep from 'sleep-promise';
 
+const appName = 'pivotal-to-trello';
+
 export interface IOptions {
   trello_key: string;
   trello_token: string;
   pivotal: string;
   from: string;
   to: string;
+}
+
+/** Incomplete list of Pivotal Tracker story properties - see https://www.pivotaltracker.com/help/api/rest/v5#story_resource */
+interface IPivotalStory {
+  id: number;
+  project_id: number;
+  name: string;
+  description: string;
+  story_type: "feature" | "bug" | "chore" | "release";
+  current_state: "accepted" | "delivered" | "finished" | "started" | "rejected" | "planned" | "unstarted" | "unscheduled";
+  estimate: number;
+  accepted_at: Date;
+  deadline: Date;
+  projected_completion: Date;
+  points_accepted: number;
+  points_total: number;
+  requested_by_id: number;
+  tasks: IPivotalTaskProperty;
+  notes: IPivotalNoteProperty;
+}
+
+interface IPivotalTaskProperty {
+  task: IPivotalTask | IPivotalTask[];
+}
+
+interface IPivotalTask {
+  id: number;
+  story_id: number;
+  description: string;
+  complete: boolean;
+  position: number;
+  created_at: Date;
+  updated_at: Date;
+  kind: string;
+}
+
+interface IPivotalNoteProperty {
+  note: IPivotalNote | IPivotalNote[];
+}
+
+interface IPivotalNote {
+  id: number;
+  story_id: number;
+  epic_id: number;
+  text: string;
+  person_id: number;
+  created_at: Date;
+  updated_at: Date;
+  file_attachment_ids: number[];
+  google_attachment_ids: number[];
+  commit_identifier: string;
+  commit_type: string;
+  kind: string;
 }
 
 interface ITrelloBoard {
@@ -45,6 +100,34 @@ interface ITrelloList {
   subscribed: boolean;
 }
 
+interface ITrelloCard {
+  id: string;
+  badges: object;
+  checkItemStates: object[];
+  closed: boolean;
+  dateLastActivity: Date;
+  desc: string;
+  descData: object;
+  due: Date;
+  dueComplete: boolean;
+  email: string;
+  idAttachmentCover: string;
+  idBoard: string;
+  idChecklists: string[];
+  idLabels: string[];
+  idList: string[];
+  idMembers: string[];
+  idMembersVoted: string[];
+  idShort: number;
+  labels: any[];
+  name: string;
+  pos: number;
+  shorLink: string;
+  shortUrl: string;
+  subscribed: boolean;
+  url: string;
+}
+
 interface ITrelloListDictionary {
   [name: string]: ITrelloList;
 }
@@ -61,6 +144,38 @@ if (PROXY) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
 
+/** Run the import from Pivotal Tracker to Trello using the specified options */
+export async function runImport(opts: IOptions) {
+
+  try {
+
+    // Configure the Trello and Pivotal Tracker APIs
+    console.log('Configuring API options');
+    var trello = new Trello(opts.trello_key, opts.trello_token);
+    pivotal.useToken(opts.pivotal);
+
+    // Pull the stories down from Pivotal
+    console.log('Retrieving stories from Pivotal Tracker')
+    const pivotalStories = await readPivotalStories(opts);
+    console.log(`Retrieved ${pivotalStories.length} stories from Pivotal Tracker.`);
+
+    // Create the required Trello lists
+    console.log('Getting Trello lists');
+    let trelloLists = await getTrelloListsFromBoard(opts, trello);
+    console.log(`Retrieved ${trelloLists.length} lists from Trello`);
+    let trelloListDictionary = await verifyTrelloLists(opts, trello, trelloLists);
+
+    // Copy the Pivotal stories over to the Trello cards
+    console.log('Creating Trello cards');
+    await createTrelloCards(opts, trello, trelloListDictionary, pivotalStories);
+
+    console.log('Finished');
+  }
+  catch (err) {
+    console.error(err);
+  }
+}
+
 /** Read the full set of stories from the source Pivotal project */
 function readPivotalStories(opts: IOptions) {
   var promise = new Promise<any[]>((resolve, reject) => {
@@ -68,7 +183,7 @@ function readPivotalStories(opts: IOptions) {
       if (err) {
         reject(err);
       } else {
-        resolve(stories);
+        resolve(Array.isArray(stories.story) ? stories.story : [stories.story]);
       }
     });
   });
@@ -90,7 +205,7 @@ async function verifyTrelloLists(opts: IOptions, trello, startingLists: ITrelloL
   }
 
   if (needed.length > 0) {
-    log.info('pivotal-to-trello', 'The following lists will be created:', needed.join(', '));
+    log.info(appName, 'The following lists will be created:', needed.join(', '));
     for (const listName of needed) {
       const list = await makeTrelloList(trello, opts, listName);
       lists[list.name] = list;
@@ -142,7 +257,8 @@ function getTrelloListsFromBoard(opts: IOptions, trello) {
 }
 
 /** Create the Trello cards */
-async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: ITrelloListDictionary, pivotalStories: any[]) {
+async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: ITrelloListDictionary, pivotalStories: IPivotalStory[]) {
+  console.log(`Creating ${pivotalStories.length} cards in Trello`);
   for (let i = 0; i < pivotalStories.length; i++) {
     const pivotalStory = pivotalStories[i];
     const trelloCard = await createTrelloCard(trello, opts.trello_key, opts.trello_token, trelloListDictionary, pivotalStory, i)
@@ -182,9 +298,11 @@ function createTrelloCard(trello, key, token, trelloListDictionary: ITrelloListD
     idList: trelloList.id
   };
 
-  var promise = new Promise<any>((resolve, reject) => {
+  console.log(`Creating Trello card for Pivotal story "${story.name}"`);
+
+  var promise = new Promise<ITrelloCard>((resolve, reject) => {
     trello.post('/1/cards', trelloPayload, function (err, card) {
-      log.info('pivotal-to-trello', 'migrating', story.id, story.name);
+      log.info(appName, 'migrating', story.id, story.name);
       if (err) {
         reject(err);
       } else {
@@ -192,9 +310,10 @@ function createTrelloCard(trello, key, token, trelloListDictionary: ITrelloListD
       }
     });
   });
+  return promise;
 }
 
-async function attachCardData(opts: IOptions, trello, pivotalStory, trelloCard) {
+async function attachCardData(opts: IOptions, trello, pivotalStory: IPivotalStory, trelloCard: ITrelloCard) {
 
   if (pivotalStory.tasks && pivotalStory.tasks.task) {
     const tasks = Array.isArray(pivotalStory.tasks.task) ? pivotalStory.tasks.task : [pivotalStory.tasks.task];
@@ -206,19 +325,20 @@ async function attachCardData(opts: IOptions, trello, pivotalStory, trelloCard) 
     await addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name);
   }
 
-  if (pivotalStory.attachments && pivotalStory.attachments.attachment) {
-    const attachments = Array.isArray(pivotalStory.attachments.attachment) ? pivotalStory.attachments.attachment : [pivotalStory.attachments.attachment];
-    await addAttachmentsToTrelloCard(opts, trello, pivotal, trelloCard.id, attachments, pivotalStory.name);
-  }
+  // if (pivotalStory.attachments && pivotalStory.attachments.attachment) {
+  //   const attachments = Array.isArray(pivotalStory.attachments.attachment) ? pivotalStory.attachments.attachment : [pivotalStory.attachments.attachment];
+  //   await addAttachmentsToTrelloCard(opts, trello, pivotal, trelloCard.id, attachments, pivotalStory.name);
+  // }
 }
 
 /** Add any checklist items to the Trello card */
-async function addChecklistsToTrelloCard(trello, cardId: string, items: any[], storyName: string) {
+async function addChecklistsToTrelloCard(trello, cardId: string, tasks: IPivotalTask[], storyName: string) {
 
   // we have to create a checklist itself before we can add items to it...
   const checklist = await createTrelloChecklist(trello, cardId);
 
-  for (let checkItem of items) {
+  console.log(`Adding ${tasks.length} checklists to card ${cardId}`);
+  for (let checkItem of tasks) {
     await addTrelloChecklistItem(trello, checklist, checkItem, storyName);
   }
 }
@@ -238,15 +358,15 @@ function createTrelloChecklist(trello, cardId) {
 }
 
 /** Add an item to the Trello card's checklist */
-function addTrelloChecklistItem(trello, checklist, checklistItem, storyName: string) {
+function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName: string) {
   if (VERBOSE) {
-    log.info('pivotal-to-trello', 'adding checkItem: %s for %s', checklistItem.description, storyName);
+    log.info(appName, 'adding checkItem: %s for %s', task.description, storyName);
   }
   var checkItemPayload = {
-    name: checklistItem.description,
-    pos: checklistItem.position,
+    name: task.description,
+    pos: task.position,
     idChecklist: checklist.id,
-    checked: checklistItem.complete
+    checked: task.complete
   };
 
   const checkItemURI = '/1/checklists/' + checklist.id + '/checkItems';
@@ -264,19 +384,20 @@ function addTrelloChecklistItem(trello, checklist, checklistItem, storyName: str
 }
 
 /** Add discussion history from a Pivotal story to the target Trello card. */
-async function addCommentsToTrelloCard(trello, cardId: string, comments: any[], storyName: string) {
-  for (let comment of comments) {
-    await addCommentToTrelloCard(trello, cardId, comment, storyName);
+async function addCommentsToTrelloCard(trello, cardId: string, notes: IPivotalNote[], storyName: string) {
+  console.log(`Adding ${notes.length} comments to card ${cardId}`);
+  for (let note of notes) {
+    await addCommentToTrelloCard(trello, cardId, note, storyName);
   }
 }
 
 /** Add a specific comment to the target Trello card. */
-function addCommentToTrelloCard(trello, cardId: string, comment, storyName: string) {
+function addCommentToTrelloCard(trello, cardId: string, note: IPivotalNote, storyName: string) {
   if (VERBOSE) {
-    log.info('pivotal-to-trello', 'adding comment: %s for %s', comment.text, storyName);
+    log.info(appName, 'adding comment: %s for %s', note.text, storyName);
   }
   var commentPayload = {
-    text: comment.text
+    text: note.text
   };
   var promise = new Promise((resolve, reject) => {
     trello.post('/1/cards/' + cardId + '/actions/comments', commentPayload, err => {
@@ -291,6 +412,7 @@ function addCommentToTrelloCard(trello, cardId: string, comment, storyName: stri
 }
 
 async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardId: string, attachments: any[], storyName: string) {
+  console.log(`Adding ${attachments.length} attachments to trello card ${cardId}`);
   var attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
   for (const attachment of attachments) {
     await addAttachmentToTrelloCard(attachment, attachmentsURI, storyName);
@@ -299,16 +421,15 @@ async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardI
 
 /** Add an attachment from Pivotal Tracker to the corresponding Trello card. */
 function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName: string) {
-  log.info('pivotal-to-trello', 'adding attachment: %s for %s', attachment.filename, storyName);
+  log.info(appName, 'adding attachment: %s for %s', attachment.filename, storyName);
 
   const promise = new Promise((resolve, reject) => {
-
     var tmpFile = tmp.fileSync();
     var fileName = tmpFile.name;
     var s = fs.createWriteStream(fileName);
 
     s.on('error', function (err) {
-      log.error('pivotal-to-trello', err);
+      log.error(appName, err);
     });
 
     s.on('close', function () {
@@ -332,14 +453,14 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
         });
 
         req.on('error', function (err: any) {
-          log.error('pivotal-to-trello', 'Could not create attachment', err);
-          log.error('pivotal-to-trello', attachment);
+          log.error(appName, 'Could not create attachment', err);
+          log.error(appName, attachment);
           reject(err);
         });
 
         req.on('response', function (res: any) {
           if (res.statusCode !== 200) {
-            log.error('pivotal-to-trello', 'Could not create attachment', res.statusCode);
+            log.error(appName, 'Could not create attachment', res.statusCode);
             res.pipe(process.stderr);
             reject(res.statusCode);
           } else {
@@ -361,26 +482,4 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
       res.pipe(s);
     });
   });
-}
-
-export async function runImport(opts: IOptions) {
-  var trello = new Trello(opts.trello_key, opts.trello_token);
-  pivotal.useToken(opts.pivotal);
-
-  try {
-    // Pull the stories down from Pivotal
-    const pivotalStories = await readPivotalStories(opts);
-
-    // Create the required Trello lists
-    let trelloLists = await getTrelloListsFromBoard(opts, trello);
-    let trelloListDictionary = await verifyTrelloLists(opts, trello, trelloLists);
-
-    // Copy the Pivotal stories over to the Trello cards
-    await createTrelloCards(opts, trello, trelloListDictionary, pivotalStories);
-
-    log.info('pivotal-to-trello', 'Finished');
-  }
-  catch (err) {
-    log.error('pivotal-to-trello', err);
-  }
 }
