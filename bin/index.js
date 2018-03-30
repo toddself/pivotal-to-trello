@@ -82,7 +82,7 @@ function verifyTrelloLists(opts, trello, startingLists) {
         if (needed.length > 0) {
             log.info(appName, 'The following lists will be created:', needed.join(', '));
             for (const listName of needed) {
-                const list = yield makeTrelloList(trello, opts, listName);
+                const list = yield makeTrelloList(opts, trello, listName);
                 lists[list.name] = list;
             }
         }
@@ -98,18 +98,18 @@ function organizeLists(trelloLists) {
     return dictionary;
 }
 /** Makes and returns a Trello list */
-function makeTrelloList(trello, opts, listName) {
+function makeTrelloList(opts, trello, listName) {
     var boardUrl = '/1/boards/' + opts.to + '/lists';
     var listPayload = {
         name: listName
     };
     var promise = new Promise((resolve, reject) => {
-        trello.post(boardUrl, listPayload, err => {
+        trello.post(boardUrl, listPayload, (err, list) => {
             if (err) {
                 reject(err);
             }
             else {
-                resolve();
+                resolve(list);
             }
         });
     });
@@ -134,13 +134,13 @@ function createTrelloCards(opts, trello, trelloListDictionary, pivotalStories) {
         console.log(`Creating ${pivotalStories.length} cards in Trello`);
         for (let i = 0; i < pivotalStories.length; i++) {
             const pivotalStory = pivotalStories[i];
-            const trelloCard = yield createTrelloCard(trello, opts.trello_key, opts.trello_token, trelloListDictionary, pivotalStory, i);
+            const trelloCard = yield createTrelloCard(trello, trelloListDictionary, pivotalStory, i);
             yield attachCardData(opts, trello, pivotalStory, trelloCard);
         }
     });
 }
 /** Create the Trello card, and bring over any associated items */
-function createTrelloCard(trello, key, token, trelloListDictionary, story, storyIndex) {
+function createTrelloCard(trello, trelloListDictionary, story, storyIndex) {
     var destList = story.current_state.toLowerCase();
     if (destList === 'unscheduled') {
         destList = 'icebox';

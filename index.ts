@@ -207,7 +207,7 @@ async function verifyTrelloLists(opts: IOptions, trello, startingLists: ITrelloL
   if (needed.length > 0) {
     log.info(appName, 'The following lists will be created:', needed.join(', '));
     for (const listName of needed) {
-      const list = await makeTrelloList(trello, opts, listName);
+      const list = await makeTrelloList(opts, trello, listName);
       lists[list.name] = list;
     }
   }
@@ -225,17 +225,17 @@ function organizeLists(trelloLists: ITrelloList[]): ITrelloListDictionary {
 }
 
 /** Makes and returns a Trello list */
-function makeTrelloList(trello, opts: IOptions, listName) {
+function makeTrelloList(opts: IOptions, trello, listName:string) {
   var boardUrl = '/1/boards/' + opts.to + '/lists';
   var listPayload = {
     name: listName
   };
-  var promise = new Promise<any>((resolve, reject) => {
-    trello.post(boardUrl, listPayload, err => {
+  var promise = new Promise<ITrelloList>((resolve, reject) => {
+    trello.post(boardUrl, listPayload, (err, list) => {
       if (err) {
         reject(err);
       } else {
-        resolve();
+        resolve(list);
       }
     });
   });
@@ -261,13 +261,13 @@ async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: I
   console.log(`Creating ${pivotalStories.length} cards in Trello`);
   for (let i = 0; i < pivotalStories.length; i++) {
     const pivotalStory = pivotalStories[i];
-    const trelloCard = await createTrelloCard(trello, opts.trello_key, opts.trello_token, trelloListDictionary, pivotalStory, i)
+    const trelloCard = await createTrelloCard(trello, trelloListDictionary, pivotalStory, i)
     await attachCardData(opts, trello, pivotalStory, trelloCard);
   }
 }
 
 /** Create the Trello card, and bring over any associated items */
-function createTrelloCard(trello, key, token, trelloListDictionary: ITrelloListDictionary, story, storyIndex: number) {
+function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, story, storyIndex: number) {
   var destList = story.current_state.toLowerCase();
 
   if (destList === 'unscheduled') {
