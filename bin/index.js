@@ -9,14 +9,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const fs = require("fs");
-const log = require("npmlog");
 const pivotal = require("pivotal");
 const request = require("hyperquest");
 const FormData = require("form-data");
 const Trello = require("node-trello");
 const tmp = require("tmp");
 const sleep = require("sleep-promise");
-const appName = 'pivotal-to-trello';
 const PROXY = process.env.PROXY || '';
 const VERBOSE = process.env.VERBOSE || false;
 const trelloAPI = process.env.TRELLO_API || 'https://api.trello.com';
@@ -33,21 +31,24 @@ function runImport(opts) {
             var trello = new Trello(opts.trello_key, opts.trello_token);
             pivotal.useToken(opts.pivotal);
             // Pull the stories down from Pivotal
-            console.log('Retrieving stories from Pivotal Tracker');
             const pivotalStories = yield readPivotalStories(opts);
             console.log(`Retrieved ${pivotalStories.length} stories from Pivotal Tracker.`);
             // Create the required Trello lists
-            console.log('Getting Trello lists');
             let trelloLists = yield getTrelloListsFromBoard(opts, trello);
-            console.log(`Retrieved ${trelloLists.length} lists from Trello`);
             let trelloListDictionary = yield verifyTrelloLists(opts, trello, trelloLists);
+            console.log(`Retrieved ${trelloLists.length} lists from Trello`);
             // Copy the Pivotal stories over to the Trello cards
             console.log('Creating Trello cards');
             yield createTrelloCards(opts, trello, trelloListDictionary, pivotalStories);
             console.log('Finished');
         }
         catch (err) {
-            console.error(getErrorMessage(err));
+            try {
+                console.error(JSON.stringify(err));
+            }
+            catch (_a) {
+                console.error(getErrorMessage(err));
+            }
         }
     });
 }
@@ -79,7 +80,7 @@ function verifyTrelloLists(opts, trello, startingLists) {
             }
         }
         if (needed.length > 0) {
-            log.info(appName, 'The following lists will be created:', needed.join(', '));
+            console.log(`The following lists will be created: ${needed.join(', ')}`);
             for (const listName of needed) {
                 const list = yield makeTrelloList(opts, trello, listName);
                 lists[list.name] = list;
@@ -155,7 +156,7 @@ function createTrelloCard(trello, trelloListDictionary, story, storyIndex) {
     }
     var trelloList = trelloListDictionary[destList];
     if (!trelloList) {
-        log.error('No list matching "' + destList + '" was found for pivotal story "' + story.name + '".');
+        console.error(`No list matching ${destList} was found for pivotal story ${story.name}`);
         return;
     }
     var trelloListId = trelloList.id;
@@ -173,7 +174,7 @@ function createTrelloCard(trello, trelloListDictionary, story, storyIndex) {
     console.log(`Creating Trello card for Pivotal story "${story.name}"`);
     var promise = new Promise((resolve, reject) => {
         trello.post('/1/cards', trelloPayload, function (err, card) {
-            log.info(appName, 'migrating', story.id, story.name);
+            console.log(`migrating story id ${story.id}`);
             if (err) {
                 reject(err);
             }
@@ -228,7 +229,7 @@ function createTrelloChecklist(trello, cardId) {
 /** Add an item to the Trello card's checklist */
 function addTrelloChecklistItem(trello, checklist, task, storyName) {
     if (VERBOSE) {
-        log.info(appName, 'adding checkItem: %s for %s', task.description, storyName);
+        console.log(`adding checkItem: ${task.description} for ${storyName}`);
     }
     var checkItemPayload = {
         name: task.description,
@@ -261,7 +262,7 @@ function addCommentsToTrelloCard(trello, cardId, notes, storyName) {
 /** Add a specific comment to the target Trello card. */
 function addCommentToTrelloCard(trello, cardId, note, storyName) {
     if (VERBOSE) {
-        log.info(appName, 'adding comment: %s for %s', note.text, storyName);
+        console.log(`adding comment: ${note.text} for ${storyName}`);
     }
     var commentPayload = {
         text: note.text
@@ -289,13 +290,13 @@ function addAttachmentsToTrelloCard(opts, trello, pivotal, cardId, attachments, 
 }
 /** Add an attachment from Pivotal Tracker to the corresponding Trello card. */
 function addAttachmentToTrelloCard(attachment, attachmentsURI, storyName) {
-    log.info(appName, 'adding attachment: %s for %s', attachment.filename, storyName);
+    console.log(`adding attachment "${attachment.fileName}" for "${storyName}"`);
     const promise = new Promise((resolve, reject) => {
         var tmpFile = tmp.fileSync();
         var fileName = tmpFile.name;
         var s = fs.createWriteStream(fileName);
         s.on('error', function (err) {
-            log.error(appName, err);
+            console.error(getErrorMessage(err));
         });
         s.on('close', function () {
             fs.readFile(fileName, function (err, data) {
@@ -315,13 +316,12 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI, storyName) {
                     headers: headers
                 });
                 req.on('error', function (err) {
-                    log.error(appName, 'Could not create attachment', err);
-                    log.error(appName, attachment);
+                    console.error(`Could not create attachment ${attachment.fileName}: ${getErrorMessage(err)}`);
                     reject(err);
                 });
                 req.on('response', function (res) {
                     if (res.statusCode !== 200) {
-                        log.error(appName, 'Could not create attachment', res.statusCode);
+                        console.error(`Could not create attachment ${attachment.fileName}: ${getErrorMessage(err)}`);
                         res.pipe(process.stderr);
                         reject(res.statusCode);
                     }
@@ -343,7 +343,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI, storyName) {
     });
     return promise;
 }
-function retry(action, retryCount = 5, delayInMs = 250) {
+function retry(action, retryCount = 5, delayInMs = 500) {
     return __awaiter(this, void 0, void 0, function* () {
         let i = 0;
         while (i < retryCount) {
@@ -351,7 +351,6 @@ function retry(action, retryCount = 5, delayInMs = 250) {
                 return yield action();
             }
             catch (err) {
-                debugger;
                 if (++i < retryCount) {
                     if (err.statusCode === 429) {
                         console.warn(`Encountered a rate limit error; delaying next call for four seconds.`);
@@ -359,11 +358,11 @@ function retry(action, retryCount = 5, delayInMs = 250) {
                     }
                     else {
                         console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
-                        yield sleep(delayInMs);
+                        yield sleep(delayInMs * i);
                     }
                 }
                 else {
-                    console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
+                    console.error(`Encountered a fatal error in retry block ${i} (bailing): "${getErrorMessage(err)}"`);
                     throw err;
                 }
             }

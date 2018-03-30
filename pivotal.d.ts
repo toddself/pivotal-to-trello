@@ -14,15 +14,16 @@ interface IPivotalStory {
     points_accepted: number;
     points_total: number;
     requested_by_id: number;
+    labels: string[];
     tasks: IPivotalTaskProperty;
     notes: IPivotalNoteProperty;
-  }
-  
-  interface IPivotalTaskProperty {
+}
+
+interface IPivotalTaskProperty {
     task: IPivotalTask | IPivotalTask[];
-  }
-  
-  interface IPivotalTask {
+}
+
+interface IPivotalTask {
     id: number;
     story_id: number;
     description: string;
@@ -31,13 +32,13 @@ interface IPivotalStory {
     created_at: Date;
     updated_at: Date;
     kind: string;
-  }
-  
-  interface IPivotalNoteProperty {
+}
+
+interface IPivotalNoteProperty {
     note: IPivotalNote | IPivotalNote[];
-  }
-  
-  interface IPivotalNote {
+}
+
+interface IPivotalNote {
     id: number;
     story_id: number;
     epic_id: number;
@@ -50,5 +51,4 @@ interface IPivotalStory {
     commit_identifier: string;
     commit_type: string;
     kind: string;
-  }
-  
+}

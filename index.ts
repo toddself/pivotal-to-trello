@@ -2,7 +2,6 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import * as log from 'npmlog'
 import * as pivotal from 'pivotal';
 import * as request from 'hyperquest';
 import * as async from 'async';
@@ -10,8 +9,6 @@ import * as FormData from 'form-data';
 import * as Trello from 'node-trello';
 import * as tmp from 'tmp';
 import * as sleep from 'sleep-promise';
-
-const appName = 'pivotal-to-trello';
 
 export interface IOptions {
   trello_key: string;
@@ -45,15 +42,13 @@ export async function runImport(opts: IOptions) {
     pivotal.useToken(opts.pivotal);
 
     // Pull the stories down from Pivotal
-    console.log('Retrieving stories from Pivotal Tracker')
     const pivotalStories = await readPivotalStories(opts);
     console.log(`Retrieved ${pivotalStories.length} stories from Pivotal Tracker.`);
 
     // Create the required Trello lists
-    console.log('Getting Trello lists');
     let trelloLists = await getTrelloListsFromBoard(opts, trello);
-    console.log(`Retrieved ${trelloLists.length} lists from Trello`);
     let trelloListDictionary = await verifyTrelloLists(opts, trello, trelloLists);
+    console.log(`Retrieved ${trelloLists.length} lists from Trello`);
 
     // Copy the Pivotal stories over to the Trello cards
     console.log('Creating Trello cards');
@@ -62,7 +57,11 @@ export async function runImport(opts: IOptions) {
     console.log('Finished');
   }
   catch (err) {
-    console.error(getErrorMessage(err));
+    try {
+      console.error(JSON.stringify(err));
+    } catch {
+      console.error(getErrorMessage(err));
+    }
   }
 }
 
@@ -95,7 +94,7 @@ async function verifyTrelloLists(opts: IOptions, trello, startingLists: ITrelloL
   }
 
   if (needed.length > 0) {
-    log.info(appName, 'The following lists will be created:', needed.join(', '));
+    console.log(`The following lists will be created: ${needed.join(', ')}`);
     for (const listName of needed) {
       const list = await makeTrelloList(opts, trello, listName);
       lists[list.name] = list;
@@ -157,7 +156,7 @@ async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: I
 }
 
 /** Create the Trello card, and bring over any associated items */
-function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, story, storyIndex: number) {
+function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, story: IPivotalStory, storyIndex: number) {
   var destList = story.current_state.toLowerCase();
 
   if (destList === 'unscheduled') {
@@ -172,11 +171,11 @@ function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, s
 
   var trelloList = trelloListDictionary[destList];
   if (!trelloList) {
-    log.error('No list matching "' + destList + '" was found for pivotal story "' + story.name + '".');
+    console.error(`No list matching ${destList} was found for pivotal story ${story.name}`);
     return;
   }
   var trelloListId = trelloList.id;
-  var labels = [story.story_type];
+  var labels = [<string>story.story_type];
   if (story.labels) {
     labels = labels.concat(story.labels);
   }
@@ -192,7 +191,7 @@ function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, s
 
   var promise = new Promise<ITrelloCard>((resolve, reject) => {
     trello.post('/1/cards', trelloPayload, function (err, card) {
-      log.info(appName, 'migrating', story.id, story.name);
+      console.log(`migrating story id ${story.id}`);
       if (err) {
         reject(err);
       } else {
@@ -250,7 +249,7 @@ function createTrelloChecklist(trello, cardId) {
 /** Add an item to the Trello card's checklist */
 function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName: string) {
   if (VERBOSE) {
-    log.info(appName, 'adding checkItem: %s for %s', task.description, storyName);
+    console.log(`adding checkItem: ${task.description} for ${storyName}`);
   }
   var checkItemPayload = {
     name: task.description,
@@ -284,7 +283,7 @@ async function addCommentsToTrelloCard(trello, cardId: string, notes: IPivotalNo
 /** Add a specific comment to the target Trello card. */
 function addCommentToTrelloCard(trello, cardId: string, note: IPivotalNote, storyName: string) {
   if (VERBOSE) {
-    log.info(appName, 'adding comment: %s for %s', note.text, storyName);
+    console.log(`adding comment: ${note.text} for ${storyName}`);
   }
   var commentPayload = {
     text: note.text
@@ -311,7 +310,7 @@ async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardI
 
 /** Add an attachment from Pivotal Tracker to the corresponding Trello card. */
 function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName: string) {
-  log.info(appName, 'adding attachment: %s for %s', attachment.filename, storyName);
+  console.log(`adding attachment "${attachment.fileName}" for "${storyName}"`);
 
   const promise = new Promise((resolve, reject) => {
     var tmpFile = tmp.fileSync();
@@ -319,7 +318,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
     var s = fs.createWriteStream(fileName);
 
     s.on('error', function (err) {
-      log.error(appName, err);
+      console.error(getErrorMessage(err));
     });
 
     s.on('close', function () {
@@ -343,14 +342,13 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
         });
 
         req.on('error', function (err: any) {
-          log.error(appName, 'Could not create attachment', err);
-          log.error(appName, attachment);
+          console.error(`Could not create attachment ${attachment.fileName}: ${getErrorMessage(err)}`);
           reject(err);
         });
 
         req.on('response', function (res: any) {
           if (res.statusCode !== 200) {
-            log.error(appName, 'Could not create attachment', res.statusCode);
+            console.error(`Could not create attachment ${attachment.fileName}: ${getErrorMessage(err)}`)
             res.pipe(process.stderr);
             reject(res.statusCode);
           } else {
@@ -375,7 +373,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
   return promise;
 }
 
-async function retry<T>(action: () => Promise<T>, retryCount: number = 5, delayInMs: number = 250) {
+async function retry<T>(action: () => Promise<T>, retryCount: number = 5, delayInMs: number = 500) {
   let i = 0;
   while (i < retryCount) {
     try {
@@ -387,10 +385,10 @@ async function retry<T>(action: () => Promise<T>, retryCount: number = 5, delayI
           await sleep(4000);
         } else {
           console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
-          await sleep(delayInMs);
+          await sleep(delayInMs * i);
         }
       } else {
-        console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
+        console.error(`Encountered a fatal error in retry block ${i} (bailing): "${getErrorMessage(err)}"`);
         throw err;
       }
     }
