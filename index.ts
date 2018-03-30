@@ -21,113 +21,6 @@ export interface IOptions {
   to: string;
 }
 
-/** Incomplete list of Pivotal Tracker story properties - see https://www.pivotaltracker.com/help/api/rest/v5#story_resource */
-interface IPivotalStory {
-  id: number;
-  project_id: number;
-  name: string;
-  description: string;
-  story_type: "feature" | "bug" | "chore" | "release";
-  current_state: "accepted" | "delivered" | "finished" | "started" | "rejected" | "planned" | "unstarted" | "unscheduled";
-  estimate: number;
-  accepted_at: Date;
-  deadline: Date;
-  projected_completion: Date;
-  points_accepted: number;
-  points_total: number;
-  requested_by_id: number;
-  tasks: IPivotalTaskProperty;
-  notes: IPivotalNoteProperty;
-}
-
-interface IPivotalTaskProperty {
-  task: IPivotalTask | IPivotalTask[];
-}
-
-interface IPivotalTask {
-  id: number;
-  story_id: number;
-  description: string;
-  complete: boolean;
-  position: number;
-  created_at: Date;
-  updated_at: Date;
-  kind: string;
-}
-
-interface IPivotalNoteProperty {
-  note: IPivotalNote | IPivotalNote[];
-}
-
-interface IPivotalNote {
-  id: number;
-  story_id: number;
-  epic_id: number;
-  text: string;
-  person_id: number;
-  created_at: Date;
-  updated_at: Date;
-  file_attachment_ids: number[];
-  google_attachment_ids: number[];
-  commit_identifier: string;
-  commit_type: string;
-  kind: string;
-}
-
-interface ITrelloBoard {
-  id: string;
-  name: string;
-  desc: string;
-  descData: string;
-  closed: boolean;
-  idOrganization: string;
-  pinned: boolean;
-  url: string;
-  shortUrl: string;
-  prefs: object;
-  labelNames: object;
-  starred: boolean;
-  limits: object;
-  memberships: any[];
-}
-
-interface ITrelloList {
-  id: string;
-  name: string;
-  closed: boolean;
-  idBoard: string;
-  pos: number;
-  subscribed: boolean;
-}
-
-interface ITrelloCard {
-  id: string;
-  badges: object;
-  checkItemStates: object[];
-  closed: boolean;
-  dateLastActivity: Date;
-  desc: string;
-  descData: object;
-  due: Date;
-  dueComplete: boolean;
-  email: string;
-  idAttachmentCover: string;
-  idBoard: string;
-  idChecklists: string[];
-  idLabels: string[];
-  idList: string[];
-  idMembers: string[];
-  idMembersVoted: string[];
-  idShort: number;
-  labels: any[];
-  name: string;
-  pos: number;
-  shorLink: string;
-  shortUrl: string;
-  subscribed: boolean;
-  url: string;
-}
-
 interface ITrelloListDictionary {
   [name: string]: ITrelloList;
 }
@@ -136,9 +29,6 @@ const PROXY = process.env.PROXY || '';
 const VERBOSE = process.env.VERBOSE || false;
 const trelloAPI = process.env.TRELLO_API || 'https://api.trello.com';
 const requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current', 'backlog', 'icebox'];
-
-const maxParallelization = 1;
-const delayInMs = 100;
 
 if (PROXY) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -172,7 +62,7 @@ export async function runImport(opts: IOptions) {
     console.log('Finished');
   }
   catch (err) {
-    console.error(err);
+    console.error(getErrorMessage(err));
   }
 }
 
@@ -225,7 +115,7 @@ function organizeLists(trelloLists: ITrelloList[]): ITrelloListDictionary {
 }
 
 /** Makes and returns a Trello list */
-function makeTrelloList(opts: IOptions, trello, listName:string) {
+function makeTrelloList(opts: IOptions, trello, listName: string) {
   var boardUrl = '/1/boards/' + opts.to + '/lists';
   var listPayload = {
     name: listName
@@ -261,7 +151,7 @@ async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: I
   console.log(`Creating ${pivotalStories.length} cards in Trello`);
   for (let i = 0; i < pivotalStories.length; i++) {
     const pivotalStory = pivotalStories[i];
-    const trelloCard = await createTrelloCard(trello, trelloListDictionary, pivotalStory, i)
+    const trelloCard = await retry(() => createTrelloCard(trello, trelloListDictionary, pivotalStory, i));
     await attachCardData(opts, trello, pivotalStory, trelloCard);
   }
 }
@@ -317,12 +207,12 @@ async function attachCardData(opts: IOptions, trello, pivotalStory: IPivotalStor
 
   if (pivotalStory.tasks && pivotalStory.tasks.task) {
     const tasks = Array.isArray(pivotalStory.tasks.task) ? pivotalStory.tasks.task : [pivotalStory.tasks.task];
-    await addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name);
+    await retry(() => addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name));
   }
 
   if (pivotalStory.notes && pivotalStory.notes.note) {
     const notes = Array.isArray(pivotalStory.notes.note) ? pivotalStory.notes.note : [pivotalStory.notes.note];
-    await addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name);
+    await retry(() => addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name));
   }
 
   // if (pivotalStory.attachments && pivotalStory.attachments.attachment) {
@@ -339,7 +229,7 @@ async function addChecklistsToTrelloCard(trello, cardId: string, tasks: IPivotal
 
   console.log(`Adding ${tasks.length} checklists to card ${cardId}`);
   for (let checkItem of tasks) {
-    await addTrelloChecklistItem(trello, checklist, checkItem, storyName);
+    await retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
   }
 }
 
@@ -387,7 +277,7 @@ function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName
 async function addCommentsToTrelloCard(trello, cardId: string, notes: IPivotalNote[], storyName: string) {
   console.log(`Adding ${notes.length} comments to card ${cardId}`);
   for (let note of notes) {
-    await addCommentToTrelloCard(trello, cardId, note, storyName);
+    await retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
   }
 }
 
@@ -415,7 +305,7 @@ async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardI
   console.log(`Adding ${attachments.length} attachments to trello card ${cardId}`);
   var attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
   for (const attachment of attachments) {
-    await addAttachmentToTrelloCard(attachment, attachmentsURI, storyName);
+    await retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
   }
 }
 
@@ -482,4 +372,48 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
       res.pipe(s);
     });
   });
+  return promise;
+}
+
+async function retry<T>(action: () => Promise<T>, retryCount: number = 5, delayInMs: number = 250) {
+  let i = 0;
+  while (i < retryCount) {
+    try {
+      return await action();
+    } catch (err) {
+      debugger;
+      if (++i < retryCount) {
+        if (err.statusCode === 429) {
+          console.warn(`Encountered a rate limit error; delaying next call for four seconds.`);
+          await sleep(4000);
+        } else {
+          console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
+          await sleep(delayInMs);
+        }
+      } else {
+        console.warn(`Encountered an error in retry block ${i}: "${getErrorMessage(err)}"`);
+        throw err;
+      }
+    }
+  }
+}
+
+function getErrorMessage(err: any) {
+  if (typeof err == "string") {
+    return err;
+  }
+  if (err.statusMessage) {
+    return err.statusMessage;
+  }
+  if (err.message) {
+    return err.message;
+  }
+  if (err.text) {
+    return err.text;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return err;
+  }
 }
