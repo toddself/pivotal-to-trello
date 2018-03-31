@@ -66,7 +66,7 @@ export async function runImport(opts: IOptions) {
     if (taskErrors.length) {
       console.error(`*** Processing encountered ${taskErrors.length} errors ***`)
       for (let taskError of taskErrors) {
-        console.error(`Task: ${taskError.task}, Item:${taskError.item}, Error: ${taskError.errorMessage}`);
+        console.error(`Task: "${taskError.task}", Item:"${taskError.item}", Error: "${taskError.errorMessage}"`);
       }
     }
 
