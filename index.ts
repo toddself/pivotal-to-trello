@@ -47,7 +47,7 @@ export async function runImport(opts: IOptions) {
 
     // Configure the Trello and Pivotal Tracker APIs
     console.log('Configuring API options');
-    var trello = new Trello(opts.trello_key, opts.trello_token);
+    const trello = new Trello(opts.trello_key, opts.trello_token);
     pivotal.useToken(opts.pivotal);
 
     // Pull the stories down from Pivotal
@@ -55,8 +55,8 @@ export async function runImport(opts: IOptions) {
     console.log(`Retrieved ${pivotalStories.length} stories from Pivotal Tracker.`);
 
     // Create the required Trello lists
-    let trelloLists = await getTrelloListsFromBoard(opts, trello);
-    let trelloListDictionary = await verifyTrelloLists(opts, trello, trelloLists);
+    const trelloLists = await getTrelloListsFromBoard(opts, trello);
+    const trelloListDictionary = await verifyTrelloLists(opts, trello, trelloLists);
     console.log(`Retrieved ${trelloLists.length} lists from Trello`);
 
     // Copy the Pivotal stories over to the Trello cards
@@ -65,7 +65,7 @@ export async function runImport(opts: IOptions) {
 
     if (taskErrors.length) {
       console.error(`*** Processing encountered ${taskErrors.length} errors ***`)
-      for (let taskError of taskErrors) {
+      for (const taskError of taskErrors) {
         console.error(`Task: "${taskError.task}", Item:"${taskError.item}", Error: "${taskError.errorMessage}"`);
       }
     }
@@ -83,7 +83,7 @@ export async function runImport(opts: IOptions) {
 
 /** Read the full set of stories from the source Pivotal project */
 function readPivotalStories(opts: IOptions) {
-  var promise = new Promise<any[]>((resolve, reject) => {
+  const promise = new Promise<any[]>((resolve, reject) => {
     pivotal.getStories(opts.from, {}, function (err, stories) {
       if (err) {
         reject(err);
@@ -98,12 +98,12 @@ function readPivotalStories(opts: IOptions) {
 /** Make sure that the required lists are present on the target trello board. */
 async function verifyTrelloLists(opts: IOptions, trello, startingLists: ITrelloList[]) {
 
-  var lists = organizeLists(startingLists);
+  const lists = organizeLists(startingLists);
 
   // Figure out which lists we need to create
-  var needed = requiredLists.slice(0);
-  for (var list of startingLists) {
-    var idx = needed.indexOf(list.name.toLowerCase());
+  const needed = requiredLists.slice(0);
+  for (const list of startingLists) {
+    const idx = needed.indexOf(list.name.toLowerCase());
     if (idx > -1) {
       needed.splice(idx, 1);
     }
@@ -122,7 +122,7 @@ async function verifyTrelloLists(opts: IOptions, trello, startingLists: ITrelloL
 
 /** Transform the lists into a dictionary object */
 function organizeLists(trelloLists: ITrelloList[]): ITrelloListDictionary {
-  var dictionary = trelloLists.reduce(function (a, list) {
+  const dictionary = trelloLists.reduce(function (a, list) {
     a[list.name.toLowerCase()] = list;
     return a;
   }, {});
@@ -131,11 +131,11 @@ function organizeLists(trelloLists: ITrelloList[]): ITrelloListDictionary {
 
 /** Makes and returns a Trello list */
 function makeTrelloList(opts: IOptions, trello, listName: string) {
-  var boardUrl = '/1/boards/' + opts.to + '/lists';
-  var listPayload = {
+  const boardUrl = '/1/boards/' + opts.to + '/lists';
+  const listPayload = {
     name: listName
   };
-  var promise = new Promise<ITrelloList>((resolve, reject) => {
+  const promise = new Promise<ITrelloList>((resolve, reject) => {
     trello.post(boardUrl, listPayload, (err, list) => {
       if (err) {
         reject(err);
@@ -178,7 +178,7 @@ async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: I
 
 /** Create the Trello card, and bring over any associated items */
 function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, story: IPivotalStory, storyIndex: number) {
-  var destList = story.current_state.toLowerCase();
+  let destList = story.current_state.toLowerCase();
 
   if (destList === 'unscheduled') {
     destList = 'icebox';
@@ -190,17 +190,17 @@ function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, s
     destList = 'current';
   }
 
-  var trelloList = trelloListDictionary[destList];
+  const trelloList = trelloListDictionary[destList];
   if (!trelloList) {
     console.error(`No list matching ${destList} was found for pivotal story ${story.name}`);
     return;
   }
-  var trelloListId = trelloList.id;
-  var labels = [<string>story.story_type];
+  const trelloListId = trelloList.id;
+  let labels = [<string>story.story_type];
   if (story.labels) {
     labels = labels.concat(story.labels);
   }
-  var trelloPayload = {
+  const trelloPayload = {
     name: story.name,
     desc: story.description || '',
     labels: labels,
@@ -210,7 +210,7 @@ function createTrelloCard(trello, trelloListDictionary: ITrelloListDictionary, s
 
   console.log(`Creating Trello card for Pivotal story "${story.name}"`);
 
-  var promise = new Promise<ITrelloCard>((resolve, reject) => {
+  const promise = new Promise<ITrelloCard>((resolve, reject) => {
     trello.post('/1/cards', trelloPayload, function (err, card) {
       console.log(`migrating story id ${story.id}`);
       if (err) {
@@ -249,7 +249,7 @@ async function addChecklistsToTrelloCard(trello, cardId: string, tasks: IPivotal
   const checklist = await createTrelloChecklist(trello, cardId);
 
   console.log(`Adding ${tasks.length} checklists to card ${cardId}`);
-  for (let checkItem of tasks) {
+  for (const checkItem of tasks) {
     try {
       await retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
     } catch (err) {
@@ -260,7 +260,7 @@ async function addChecklistsToTrelloCard(trello, cardId: string, tasks: IPivotal
 
 /** Create a checklist in the Trello card */
 function createTrelloChecklist(trello, cardId) {
-  var promise = new Promise<any>((resolve, reject) => {
+  const promise = new Promise<any>((resolve, reject) => {
     trello.post('/1/cards/' + cardId + '/checklists', function (err, checklist) {
       if (err) {
         reject(err);
@@ -277,7 +277,7 @@ function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName
   if (VERBOSE) {
     console.log(`adding checkItem: ${task.description} for ${storyName}`);
   }
-  var checkItemPayload = {
+  const checkItemPayload = {
     name: task.description,
     pos: task.position,
     idChecklist: checklist.id,
@@ -301,7 +301,7 @@ function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName
 /** Add discussion history from a Pivotal story to the target Trello card. */
 async function addCommentsToTrelloCard(trello, cardId: string, notes: IPivotalNote[], storyName: string) {
   console.log(`Adding ${notes.length} comments to card ${cardId}`);
-  for (let note of notes) {
+  for (const note of notes) {
     try {
       await retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
     } catch (err) {
@@ -315,10 +315,10 @@ function addCommentToTrelloCard(trello, cardId: string, note: IPivotalNote, stor
   if (VERBOSE) {
     console.log(`adding comment: ${note.text} for ${storyName}`);
   }
-  var commentPayload = {
+  const commentPayload = {
     text: note.text
   };
-  var promise = new Promise((resolve, reject) => {
+  const promise = new Promise((resolve, reject) => {
     trello.post('/1/cards/' + cardId + '/actions/comments', commentPayload, err => {
       if (err) {
         reject(err);
@@ -332,7 +332,7 @@ function addCommentToTrelloCard(trello, cardId: string, note: IPivotalNote, stor
 
 async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardId: string, attachments: any[], storyName: string) {
   console.log(`Adding ${attachments.length} attachments to trello card ${cardId}`);
-  var attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
+  const attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
   for (const attachment of attachments) {
     try {
       await retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
@@ -347,9 +347,9 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
   console.log(`adding attachment "${attachment.fileName}" for "${storyName}"`);
 
   const promise = new Promise((resolve, reject) => {
-    var tmpFile = tmp.fileSync();
-    var fileName = tmpFile.name;
-    var s = fs.createWriteStream(fileName);
+    const tmpFile = tmp.fileSync();
+    const fileName = tmpFile.name;
+    const s = fs.createWriteStream(fileName);
 
     s.on('error', function (err) {
       console.error(getErrorMessage(err));
@@ -364,13 +364,13 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
         // the trello API is VERY pedantic about what it recieves and for
         // some reason request wasn't doing it right, so we'll build
         // the request using form-data and hyperquest ourselves
-        var form = new FormData({});
+        const form = new FormData({});
         form.append('name', attachment.fileName);
         form.append('file', data, { filename: fileName });
-        var headers = form.getHeaders();
+        const headers = form.getHeaders();
         headers['content-length'] = form.getLengthSync();
 
-        var req = request(attachmentsURI, {
+        const req = request(attachmentsURI, {
           method: 'POST',
           headers: headers
         });
@@ -394,7 +394,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
       });
     });
 
-    var pivotalRequest = request(attachment.url, {
+    const pivotalRequest = request(attachment.url, {
       headers: {
         'X-TrackerToken': pivotal
       }

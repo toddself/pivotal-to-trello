@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 'use strict';
 
-var path = require('path');
-var fs = require('fs');
-var minimist = require('minimist');
+const path = require('path');
+const fs = require('fs');
+const minimist = require('minimist');
 
 import * as importer from './index';
 
-var args = minimist(process.argv.slice(2));
+const args = minimist(process.argv.slice(2));
 
 async function main() {
 
   const opts: importer.IOptions = <any>{};
 
   if (args.h || args.help) {
-    var usage = path.join(__dirname, 'usage.txt');
+    const usage = path.join(__dirname, 'usage.txt');
     fs.createReadStream(usage).pipe(process.stdout);
     return;
   }
