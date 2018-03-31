@@ -22,6 +22,8 @@ const requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current
 if (PROXY) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
+const taskErrors = [];
+const maxTaskErrors = 25;
 /** Run the import from Pivotal Tracker to Trello using the specified options */
 function runImport(opts) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -40,6 +42,12 @@ function runImport(opts) {
             // Copy the Pivotal stories over to the Trello cards
             console.log('Creating Trello cards');
             yield createTrelloCards(opts, trello, trelloListDictionary, pivotalStories);
+            if (taskErrors.length) {
+                console.error(`*** Processing encountered ${taskErrors.length} errors ***`);
+                for (let taskError of taskErrors) {
+                    console.error(`Task: ${taskError.task}, Item:${taskError.item}, Error: ${taskError.errorMessage}`);
+                }
+            }
             console.log('Finished');
         }
         catch (err) {
@@ -134,8 +142,13 @@ function createTrelloCards(opts, trello, trelloListDictionary, pivotalStories) {
         console.log(`Creating ${pivotalStories.length} cards in Trello`);
         for (let i = 0; i < pivotalStories.length; i++) {
             const pivotalStory = pivotalStories[i];
-            const trelloCard = yield retry(() => createTrelloCard(trello, trelloListDictionary, pivotalStory, i));
-            yield attachCardData(opts, trello, pivotalStory, trelloCard);
+            try {
+                const trelloCard = yield retry(() => createTrelloCard(trello, trelloListDictionary, pivotalStory, i));
+                yield attachCardData(opts, trello, pivotalStory, trelloCard);
+            }
+            catch (err) {
+                handleTaskError('create card', pivotalStory.name, err);
+            }
         }
     });
 }
@@ -189,11 +202,11 @@ function attachCardData(opts, trello, pivotalStory, trelloCard) {
     return __awaiter(this, void 0, void 0, function* () {
         if (pivotalStory.tasks && pivotalStory.tasks.task) {
             const tasks = Array.isArray(pivotalStory.tasks.task) ? pivotalStory.tasks.task : [pivotalStory.tasks.task];
-            yield retry(() => addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name));
+            yield addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name);
         }
         if (pivotalStory.notes && pivotalStory.notes.note) {
             const notes = Array.isArray(pivotalStory.notes.note) ? pivotalStory.notes.note : [pivotalStory.notes.note];
-            yield retry(() => addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name));
+            yield addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name);
         }
         // if (pivotalStory.attachments && pivotalStory.attachments.attachment) {
         //   const attachments = Array.isArray(pivotalStory.attachments.attachment) ? pivotalStory.attachments.attachment : [pivotalStory.attachments.attachment];
@@ -208,7 +221,12 @@ function addChecklistsToTrelloCard(trello, cardId, tasks, storyName) {
         const checklist = yield createTrelloChecklist(trello, cardId);
         console.log(`Adding ${tasks.length} checklists to card ${cardId}`);
         for (let checkItem of tasks) {
-            yield retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
+            try {
+                yield retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
+            }
+            catch (err) {
+                handleTaskError('add checklist item', checkItem.description, err);
+            }
         }
     });
 }
@@ -255,7 +273,12 @@ function addCommentsToTrelloCard(trello, cardId, notes, storyName) {
     return __awaiter(this, void 0, void 0, function* () {
         console.log(`Adding ${notes.length} comments to card ${cardId}`);
         for (let note of notes) {
-            yield retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
+            try {
+                yield retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
+            }
+            catch (err) {
+                handleTaskError('add comment', note.text, err);
+            }
         }
     });
 }
@@ -284,7 +307,12 @@ function addAttachmentsToTrelloCard(opts, trello, pivotal, cardId, attachments, 
         console.log(`Adding ${attachments.length} attachments to trello card ${cardId}`);
         var attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
         for (const attachment of attachments) {
-            yield retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
+            try {
+                yield retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
+            }
+            catch (err) {
+                handleTaskError('add attachment', attachment.fileName, err);
+            }
         }
     });
 }
@@ -307,7 +335,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI, storyName) {
                 // some reason request wasn't doing it right, so we'll build
                 // the request using form-data and hyperquest ourselves
                 var form = new FormData({});
-                form.append('name', attachment.filename);
+                form.append('name', attachment.fileName);
                 form.append('file', data, { filename: fileName });
                 var headers = form.getHeaders();
                 headers['content-length'] = form.getLengthSync();
@@ -387,6 +415,19 @@ function getErrorMessage(err) {
     }
     catch (_a) {
         return err;
+    }
+}
+/** When an error occurs performing a specific task */
+function handleTaskError(task, item, err) {
+    const taskError = {
+        task: task,
+        item: item,
+        errorMessage: getErrorMessage(err)
+    };
+    taskErrors.push(taskError);
+    console.error(`Error trying to perform task ${task} on item ${item}: ${taskError.errorMessage}`);
+    if (taskErrors.length > maxTaskErrors) {
+        throw "Exceeded maximum task errors";
     }
 }
 //# sourceMappingURL=index.js.map

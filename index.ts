@@ -22,6 +22,12 @@ interface ITrelloListDictionary {
   [name: string]: ITrelloList;
 }
 
+interface ITaskError {
+  task: string,
+  item: string,
+  errorMessage: string
+}
+
 const PROXY = process.env.PROXY || '';
 const VERBOSE = process.env.VERBOSE || false;
 const trelloAPI = process.env.TRELLO_API || 'https://api.trello.com';
@@ -30,6 +36,9 @@ const requiredLists = ['accepted', 'delivered', 'rejected', 'finished', 'current
 if (PROXY) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
+
+const taskErrors: ITaskError[] = [];
+const maxTaskErrors = 25;
 
 /** Run the import from Pivotal Tracker to Trello using the specified options */
 export async function runImport(opts: IOptions) {
@@ -53,6 +62,13 @@ export async function runImport(opts: IOptions) {
     // Copy the Pivotal stories over to the Trello cards
     console.log('Creating Trello cards');
     await createTrelloCards(opts, trello, trelloListDictionary, pivotalStories);
+
+    if (taskErrors.length) {
+      console.error(`*** Processing encountered ${taskErrors.length} errors ***`)
+      for (let taskError of taskErrors) {
+        console.error(`Task: ${taskError.task}, Item:${taskError.item}, Error: ${taskError.errorMessage}`);
+      }
+    }
 
     console.log('Finished');
   }
@@ -150,8 +166,13 @@ async function createTrelloCards(opts: IOptions, trello, trelloListDictionary: I
   console.log(`Creating ${pivotalStories.length} cards in Trello`);
   for (let i = 0; i < pivotalStories.length; i++) {
     const pivotalStory = pivotalStories[i];
-    const trelloCard = await retry(() => createTrelloCard(trello, trelloListDictionary, pivotalStory, i));
-    await attachCardData(opts, trello, pivotalStory, trelloCard);
+    try {
+      const trelloCard = await retry(() => createTrelloCard(trello, trelloListDictionary, pivotalStory, i));
+      await attachCardData(opts, trello, pivotalStory, trelloCard);
+    }
+    catch (err) {
+      handleTaskError('create card', pivotalStory.name, err);
+    }
   }
 }
 
@@ -206,12 +227,13 @@ async function attachCardData(opts: IOptions, trello, pivotalStory: IPivotalStor
 
   if (pivotalStory.tasks && pivotalStory.tasks.task) {
     const tasks = Array.isArray(pivotalStory.tasks.task) ? pivotalStory.tasks.task : [pivotalStory.tasks.task];
-    await retry(() => addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name));
+    await addChecklistsToTrelloCard(trello, trelloCard.id, tasks, pivotalStory.name);
+
   }
 
   if (pivotalStory.notes && pivotalStory.notes.note) {
     const notes = Array.isArray(pivotalStory.notes.note) ? pivotalStory.notes.note : [pivotalStory.notes.note];
-    await retry(() => addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name));
+    await addCommentsToTrelloCard(trello, trelloCard.id, notes, pivotalStory.name);
   }
 
   // if (pivotalStory.attachments && pivotalStory.attachments.attachment) {
@@ -228,7 +250,11 @@ async function addChecklistsToTrelloCard(trello, cardId: string, tasks: IPivotal
 
   console.log(`Adding ${tasks.length} checklists to card ${cardId}`);
   for (let checkItem of tasks) {
-    await retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
+    try {
+      await retry(() => addTrelloChecklistItem(trello, checklist, checkItem, storyName));
+    } catch (err) {
+      handleTaskError('add checklist item', checkItem.description, err);
+    }
   }
 }
 
@@ -276,7 +302,11 @@ function addTrelloChecklistItem(trello, checklist, task: IPivotalTask, storyName
 async function addCommentsToTrelloCard(trello, cardId: string, notes: IPivotalNote[], storyName: string) {
   console.log(`Adding ${notes.length} comments to card ${cardId}`);
   for (let note of notes) {
-    await retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
+    try {
+      await retry(() => addCommentToTrelloCard(trello, cardId, note, storyName));
+    } catch (err) {
+      handleTaskError('add comment', note.text, err);
+    }
   }
 }
 
@@ -304,7 +334,11 @@ async function addAttachmentsToTrelloCard(opts: IOptions, trello, pivotal, cardI
   console.log(`Adding ${attachments.length} attachments to trello card ${cardId}`);
   var attachmentsURI = trelloAPI + '/1/cards/' + cardId + '/attachments?key=' + opts.trello_key + '&token=' + opts.trello_token;
   for (const attachment of attachments) {
-    await retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
+    try {
+      await retry(() => addAttachmentToTrelloCard(attachment, attachmentsURI, storyName));
+    } catch (err) {
+      handleTaskError('add attachment', attachment.fileName, err);
+    }
   }
 }
 
@@ -331,7 +365,7 @@ function addAttachmentToTrelloCard(attachment, attachmentsURI: string, storyName
         // some reason request wasn't doing it right, so we'll build
         // the request using form-data and hyperquest ourselves
         var form = new FormData({});
-        form.append('name', attachment.filename);
+        form.append('name', attachment.fileName);
         form.append('file', data, { filename: fileName });
         var headers = form.getHeaders();
         headers['content-length'] = form.getLengthSync();
@@ -412,5 +446,19 @@ function getErrorMessage(err: any) {
     return JSON.stringify(err);
   } catch {
     return err;
+  }
+}
+
+/** When an error occurs performing a specific task */
+function handleTaskError(task: string, item: string, err: any) {
+  const taskError: ITaskError = {
+    task: task,
+    item: item,
+    errorMessage: getErrorMessage(err)
+  };
+  taskErrors.push(taskError);
+  console.error(`Error trying to perform task ${task} on item ${item}: ${taskError.errorMessage}`)
+  if (taskErrors.length > maxTaskErrors) {
+    throw "Exceeded maximum task errors";
   }
 }
